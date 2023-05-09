@@ -1,0 +1,9 @@
+validation:
+- wsa:
+    path: C:\Users\joeyspronck\Documents\Other\wsibulk\tissue-masks\103S_tissue.tif
+  wsi:
+    path: C:\Users\joeyspronck\Documents\Other\wsibulk\images\103S.tif
+- wsa:
+    path: C:\Users\joeyspronck\Documents\Other\wsibulk\tissue-masks\111S_tissue.tif
+  wsi:
+    path: C:\Users\joeyspronck\Documents\Other\wsibulk\images\111S.tif

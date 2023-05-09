@@ -1,0 +1,29 @@
+wholeslidedata:
+    default:
+        image_backend: asap
+        yaml_source: auto_files_yml
+        
+        batch_shape:
+            batch_size: 1
+            shape: [auto_sampler_patch_size, auto_sampler_patch_size, 3]
+            y_shape: [auto_sampler_patch_size, auto_sampler_patch_size]
+            spacing: [auto_spacing]
+
+        point_sampler:
+            attribute: CenterPointSampler
+
+        patch_sampler:
+            center: True
+            relative: True
+
+        patch_label_sampler:
+            center: True
+            spacing: auto_tissue_mask_spacing
+            ratio: auto_tissue_mask_ratio
+
+        annotation_parser@replace=true: 
+            module: wholeslidedata.annotation.parser
+            attribute: MaskAnnotationParser
+            processing_spacing: 4.0
+            output_spacing: auto_spacing
+            shape: [auto_output_patch_size, auto_output_patch_size]

@@ -1,0 +1,34 @@
+wholeslidedata:
+  default:
+    annotation_parser@replace=true:
+      attribute: MaskAnnotationParser
+      module: wholeslidedata.annotation.parser
+      output_spacing: 0.5
+      processing_spacing: 4.0
+      shape:
+      - 768
+      - 768
+    batch_shape:
+      batch_size: 1
+      shape:
+      - 1280
+      - 1280
+      - 3
+      spacing:
+      - 0.5
+      y_shape:
+      - 1280
+      - 1280
+    dataset:
+      copy_path: auto_copy_path
+    image_backend: asap
+    patch_label_sampler:
+      center: true
+      ratio: 1.0
+      spacing: 0.5
+    patch_sampler:
+      center: true
+      relative: true
+    point_sampler:
+      attribute: CenterPointSampler
+    yaml_source: example_output_folder\configs\wsi_borderless_inference_files.yml
