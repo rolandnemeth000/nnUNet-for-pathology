@@ -1,9 +1,23 @@
 # Welcome to nnUNet for pathology!
+## For now check out our [v1](https://github.com/DIAGNijmegen/nnUNet-for-pathology/tree/nnunet_for_pathology_v1) and [v2](https://github.com/DIAGNijmegen/nnUNet-for-pathology/tree/nnunet_for_pathology_v2) branch!
+
 This repository contains code for applying nnUNet to pathology applications and is related to our [MIDL long paper](https://openreview.net/forum?id=aHuwlUu_QR). The code available in this Master branch is only a placeholder at the moment, as we are in the process of transferring our proposed enhancements to the nnUNet_v2 codebase. The [nnunet_for_pathology_v1 branch](https://github.com/DIAGNijmegen/nnUNet-for-pathology/tree/nnunet_for_pathology_v1) contains the code used in the paper, and guides you through the steps taken to achieve our #1 segmentation performance on the [TIGER challenge](https://tiger.grand-challenge.org/)'s experimental test set.
 
-Next to the readability and usability improvements of nnUNet v2, we are currently working on the implementation of dynamic dataloaders to allow application to a wider variety of pathology tasks. nnUNet's current sampling strategy and static dataset requirement may not be optimal for many pathology applications, such as cases with vast class imbalance or fully annotated whole slide images. To address these challenges, we plan to implement dynamic data loaders and remove the requirement for a static dataset to initialize the model configuration in our publicly available codebase, expanding the applicability of nnUNet in pathology.
+Next to the readability and usability improvements of nnUNet v2, we implemented dynamic dataloaders to allow application to a wider variety of pathology tasks in th [nnunet_for_pathology_v2 branch](https://github.com/DIAGNijmegen/nnUNet-for-pathology/tree/nnunet_for_pathology_v2). nnUNet's current sampling strategy and static dataset requirement may not be optimal for many pathology applications, such as cases with vast class imbalance or fully annotated whole slide images. To address these challenges, we plan to implemented data loaders and remove the requirement for a static dataset to initialize the model configuration in our publicly available codebase, expanding the applicability of nnUNet in pathology.
 
-Interested? Stay tuned!
+
+.
+
+.
+
+.
+
+.
+
+.
+
+.
+
 
 # Original nnUNet (v2) readme follows:
 
