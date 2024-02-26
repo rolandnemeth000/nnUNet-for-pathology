@@ -227,9 +227,7 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
             # save
             splits_json_path = join(nnUNet_preprocessed, self.plans_manager.dataset_name, 'splits.json')
             self.splits_json = splits_json
-            with open(splits_json_path, 'w') as file:
-                save_json(self.splits_json, file)
-            
+            save_json(self.splits_json, splits_json_path)
 
 ### GET DATALOADERS - as generator objects
     def get_dataloaders(self, subset=False, sample_double=False, cpus=10):
