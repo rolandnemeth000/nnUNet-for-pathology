@@ -187,6 +187,7 @@ task_name = 'Task031_batch1_2_3_4_6_to_train_roi_based_split'
 trainer_name = 'nnUNetTrainerV2_BN_pathology_DA_ignore0_hed005__nnUNet_RGB_scaleTo_0_1_bs8_ps512'
 model_base_path = convert_path(rf"Z:\projects\pathology-lung-TIL\nnUNet_raw_data_base\results\nnUNet\2d\{task_name}\{trainer_name}", to=current_os)
 norm = norm_01 # z_norm or norm_01, norm_01 for models trained on 0-1 scaled data, z_norm for default nnunet models, using z-score normalized data 
+output_minus_1 = True # Set to True if you want to subtract 1 from the argmax (for example when label 0 is ignore and label 1 is background, which you want to be 0 for visualisation purposes)
 
 ### OUTPUT FOLDER AND DATASET NAME
 dataset_name = 'radboud_retrospective' # name that gets added to folder names and file names
@@ -355,7 +356,8 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
             time_pre_predict = time.time()
             softmax_list = ensemble_softmax_list(trainer, params, prep)
             softmax_mean = np.array(softmax_list).mean(0)
-            pred_output_maybe_trimmed = softmax_mean.argmax(axis=-1)
+            pred_output_maybe_trimmed = softmax_mean.argmax(axis=-1)-(1 if output_minus_1 else 0)
+            time_post_predict = time.time()
             time_post_predict = time.time()
             duration_predict = time_post_predict - time_pre_predict
                 # time predict end
