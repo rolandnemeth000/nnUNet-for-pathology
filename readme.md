@@ -15,7 +15,7 @@ With the use of dynamic dataloaders we do not need to preprocess and fingerprint
 
 Altogether you can train your model with the following command:
 
-`bash installs_and_run_training.sh \<dataset index\> \<fold\> \<trainer name\>`
+`bash installs_and_run_training.sh <dataset index> <fold> <trainer name>`
 
 example:
 
