@@ -261,7 +261,7 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
             label_sample_weights = self.dataset_json['label_sample_weights']
             print('[LABEL SAMPLE WEIGHTS]')
             print(label_sample_weights)
-        spacing = 0.5
+        spacing = self.dataset_json['spacing'] if 'spacing' in self.dataset_json else 0.5
 
         patch_size = list(self.configuration_manager.patch_size)
 
