@@ -262,6 +262,7 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
             print('[LABEL SAMPLE WEIGHTS]')
             print(label_sample_weights)
         spacing = self.dataset_json['spacing'] if 'spacing' in self.dataset_json else 0.5
+        load_images = self.dataset_json['load_images'] if 'load_images' in self.dataset_json else True
 
         patch_size = list(self.configuration_manager.patch_size)
 
@@ -307,6 +308,7 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
             fill_template['batch_callbacks'][nnunet_callback_idx]['patch_size_spatial'] = patch_size
         fill_template['batch_callbacks'][-1]['sizes'] = extra_ds_sizes
         fill_template['dataset']['copy_path'] = copy_path
+        fill_template['dataset']['load_images'] = load_images
 
         self.train_config = iterator_template
         self.val_config = deepcopy(iterator_template)
