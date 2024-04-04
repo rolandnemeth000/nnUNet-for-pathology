@@ -173,9 +173,9 @@ def return_matches_to_run(matches, output_folder):
     matches_to_run = [matches[i] for i in matches_to_run_idx]
 
     if len(matches_to_run) == 0:
-        print(f"All files have been processed already, see {output_folder}")
+        print(f"\nAll files have been processed already, see {output_folder}")
     else:
-        print(f"Returning {len(matches_to_run)} matches that are not finished yet")
+        print(f"\nReturning {len(matches_to_run)} matches that are not finished yet")
     return matches_to_run
 
 #################################################################
@@ -190,7 +190,9 @@ output_minus_1 = True # Set to True if you want to subtract 1 from the argmax (f
 ### OUTPUT FOLDER AND DATASET NAME
 dataset_name = 'V2_PDL1_test' # name that gets added to folder names and file names
 output_folder = Path('/data/pathology/projects/pathology-lung-TIL/nnUNet_raw_data_base/inference_results/v2_Task008_PDL1_simplified_and_union_annotations_wei_i0_nnunet_aug_TEST_SET')
+local_output_folder = Path('/home/user/workdir')
 os.makedirs(output_folder, exist_ok=True)
+os.makedirs(local_output_folder, exist_ok=True)
 
 ### MATCHES YOU WANT TO RUN
 # This is a list of tuples, where each tuple contains the path to the wsi and the path to the tissue mask
@@ -314,9 +316,11 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
     wsm_writer = WholeSlideMaskWriter()  # whole slide mask
     wsu_writer = WholeSlideMaskWriter()  # whole slide uncertainty
     # Create files
-    wsm_writer.write(path=wsm_path, spacing=real_spacing, dimensions=shape,
+    wsm_path_local = local_output_folder / (image_path.stem + '_nnunet.tif')
+    wsu_path_local = local_output_folder / (image_path.stem + '_uncertainty.tif')
+    wsm_writer.write(path=wsm_path_local, spacing=real_spacing, dimensions=shape,
                     tile_shape=(output_patch_size, output_patch_size))
-    wsu_writer.write(path=wsu_path, spacing=real_spacing,
+    wsu_writer.write(path=wsu_path_local, spacing=real_spacing,
                     dimensions=shape, tile_shape=(output_patch_size, output_patch_size))
 
     #################################################################
@@ -442,9 +446,11 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
             time_pre_next = time.time()
         print('[PROCESSED ALL TILES]', flush=True)
 
-    print('[WRITING] inference and uncertainty masks', flush=True)
-    wsm_writer.save()  # if done save last image
-    wsu_writer.save()  # if done save last image
+    print('[WRITING and TRANSFERING] inference and uncertainty masks', flush=True)
+    wsm_writer.save()  # if done save image
+    shutil.copyfile(wsm_path_local, wsm_path)
+    wsu_writer.save()  # if done save image
+    shutil.copyfile(wsu_path_local, wsu_path)
 
     # Save runtime
     end_time = time.time()
