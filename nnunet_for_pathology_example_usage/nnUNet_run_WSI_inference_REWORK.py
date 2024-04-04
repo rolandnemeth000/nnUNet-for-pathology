@@ -267,6 +267,9 @@ if wandb:
 ##################################################################################################################################
 print('\n\n\n####### START OF LOOP #######')
 for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
+    image_path = Path(image_path)
+    mask_path = Path(mask_path)
+    
     print(f'\n[NEXT MATCH] [{idx_match}/{len(matches_to_run)})]:', '\n\t', image_path, mask_path)
     
     ### CHECK IF WE NEED TO PROCESS THIS FILE
