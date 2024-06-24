@@ -7,13 +7,14 @@ import torch.cuda
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from batchgenerators.utilities.file_and_folder_operations import join, isfile, load_json
-from nnunetv2.paths import nnUNet_preprocessed
+from nnunetv2.paths import nnUNet_preprocessed, nnUNet_results
 from nnunetv2.run.load_pretrained_weights import load_pretrained_weights
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from torch.backends import cudnn
 import wandb
+import datetime
 
 def find_free_network_port() -> int:
     """Finds a free port on localhost.
@@ -140,7 +141,8 @@ def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, use_compressed
 
 
 def run_training(dataset_name_or_id: Union[str, int],
-                 configuration: str, fold: Union[int, str],
+                 configuration: str, 
+                 fold: Union[int, str],
                  trainer_class_name: str = 'nnUNetTrainer',
                  plans_identifier: str = 'nnUNetPlans',
                  pretrained_weights: Optional[str] = None,
@@ -206,19 +208,51 @@ def run_training(dataset_name_or_id: Union[str, int],
             wandb.login(key=WANDB_API_KEY)
             print("[DONE, LOGGING IN]")
 
+
+            ### TODO: fix this check, allows to run all folds again if some crashed, only the ones that crashed will continue to run
+            # def project_exists(dataset_name):
+            #     """Check if a project exists on wandb."""
+            #     api = wandb.Api()
+            #     try:
+            #         api.project(entity='your_entity_name', project=dataset_name)  # Replace 'your_entity_name' with your actual entity name
+            #         return True
+            #     except wandb.errors.CommError:
+            #         return False
+
+            # def is_run_active_check():
+            #     """Check if there is an active run with the specified ID."""
+            #     api = wandb.Api()
+            #     runs = api.runs(nnunet_trainer.plans_manager.dataset_name, filters={"state": "running"})
+            #     for run in runs:
+            #         if run.id == nnunet_trainer.wandb_id:
+            #             return True
+            #     return False
+
+            # # Check if the project exists before checking for active runs
+            # if project_exists(nnunet_trainer.plans_manager.dataset_name):
+            #     if is_run_active_check():
+            #         print(f"A run with ID {nnunet_trainer.wandb_id} is already active. Exiting...")
+            #         exit()
+
             print(nnunet_trainer.wandb_name)
             if continue_training: 
                 run = wandb.init(project=f"{nnunet_trainer.plans_manager.dataset_name}", 
                                 name=f'{nnunet_trainer.wandb_name}',
-                                id=f'{nnunet_trainer.wandb_name}', 
+                                id=f'{nnunet_trainer.wandb_id}', 
+                                dir=join(nnunet_trainer.output_folder, 'wandb'),
                                 resume=True
-                                )
+                        )
+                print('RESUMING PREVIOUS RUN')
             else:
                 run = wandb.init(project=f"{nnunet_trainer.plans_manager.dataset_name}", 
                                 name=f'{nnunet_trainer.wandb_name}',
-                                id=f'{nnunet_trainer.wandb_name}'
+                                id=f'{nnunet_trainer.wandb_id}',
+                                dir=join(nnunet_trainer.output_folder, 'wandb')
                                 )
+                print('STARTING NEW RUN')
             print("[DONE, INIT PROJECT]")
+            current_datetime = datetime.datetime.now()
+            print(f"Current date and time: {current_datetime}")
 ###
 
         if torch.cuda.is_available():
