@@ -121,6 +121,7 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
         self.output_folder = join(self.output_folder_base, f'fold_{fold}')
         if self.wandb:
             self.wandb_name = f'fold{self.fold}' + '__' + self.__class__.__name__ + '__' + self.plans_manager.plans_name
+            self.wandb_id = f'{self.plans_manager.dataset_name[:11]}_{self.wandb_name}'
 
         # self.preprocessed_dataset_folder = join(self.preprocessed_dataset_folder_base,
         #                                         self.configuration_manager.data_identifier)
@@ -229,8 +230,18 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
             self.splits_json = splits_json
             save_json(self.splits_json, splits_json_path)
 
+### This is a function that can be overwritten to allows child classes you to modify the fill_template before the iterators are created
+    def modify_fill_template(self, fill_template):
+        pass
+
+    def set_nested_value(self, dic, keys, value):
+        """ Set a value in a nested dictionary, creating intermediate dicts as needed """
+        for key in keys[:-1]:
+            dic = dic.setdefault(key, {})
+        dic[keys[-1]] = value
+
 ### GET DATALOADERS - as generator objects
-    def get_dataloaders(self, subset=False, sample_double=False, cpus=10):
+    def get_dataloaders(self, subset=False, sample_double=False, cpus=7):
         
         if subset:
             print('\n\n\n\nUSING DATA SUBSET\n\n\n\n')
@@ -242,12 +253,6 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
 
         
         iterator_template_path = join(os.path.dirname(__file__), f'{self.iterator_template}_template.json')
-        # if self.albumentations_aug:
-        #     iterator_template_path = join(os.path.dirname(__file__), 'wsd_iterator_alb_aug_template.json')
-        # else:
-        #     print('[nnUNet augmentation not efficiently implemented yet]')
-        #     1/0 # not implemented 
-        #     iterator_template_path = join(os.path.dirname(__file__), 'wsd_iterator_nnunet_aug_template.json')
         print(f'[ITERATOR TEMPLATE] Using iterator template: {iterator_template_path}')
         iterator_template = load_json(iterator_template_path)
         split_json = load_json(join(nnUNet_preprocessed, self.plans_manager.dataset_name, 'splits.json'))
@@ -257,11 +262,12 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
             fold_split_dict = {'training': fold_split_dict['training'][-10:], 'validation': fold_split_dict['validation'][-5:]}
         copy_path = '/home/user'
         labels = self.dataset_json['labels']
+        sampling_labels = self.dataset_json['sampling_labels'] if 'sampling_labels' in self.dataset_json else labels # setting ['sampling_labels'] is optional
         if self.label_sampling_strategy == 'weighted': 
             label_sample_weights = self.dataset_json['label_sample_weights']
             print('[LABEL SAMPLE WEIGHTS]')
             print(label_sample_weights)
-        spacing = 0.5
+        spacing = self.dataset_json['spacing'] if 'spacing' in self.dataset_json else 0.5
 
         patch_size = list(self.configuration_manager.patch_size)
 
@@ -287,12 +293,11 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
             extra_ds_shapes = ds_shapes[1:]
         
         device = self.device
-
         
         seed = int(str(time())[-3:]) # Taking random seed to prevent the idea that you are using a specific seed, which doesnt work anymore if your training gets interrupted and you continue training afterwards
         # print(f'Taking random seed {seed} for iterators')
         # additionally we initialise each iterator with a random seed, so that each iterator has a different augmentations. We do this in the callback
-           
+
         fill_template = iterator_template['wholeslidedata']['default']
         fill_template['seed']=seed
         fill_template['yaml_source'] = fold_split_dict
@@ -300,6 +305,9 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
         fill_template['batch_shape']['batch_size'] = batch_size
         fill_template['batch_shape']['spacing'] = spacing
         fill_template['batch_shape']['shape'] = patch_shape
+
+        self.set_nested_value(fill_template, ['label_sampler', 'labels'], sampling_labels) # fill_template['label_sampler']['labels'] was not present in the non-weighted templates, need to be made if not present, function serves to prevent unintentional key value removal in custom templates
+        
         if self.label_sampling_strategy == 'weighted':  
             fill_template['label_sampler']['labels'] = label_sample_weights
         if self.aug == 'nnunet':
@@ -308,10 +316,15 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
         fill_template['batch_callbacks'][-1]['sizes'] = extra_ds_sizes
         fill_template['dataset']['copy_path'] = copy_path
 
+        ### This function is intended to be overridden by child classes to make modification to the template if needed
+        self.modify_fill_template(fill_template)
+        ###
+
         self.train_config = iterator_template
         self.val_config = deepcopy(iterator_template)
         
-        self.val_config['wholeslidedata']['default']['batch_callbacks'] = self.val_config['wholeslidedata']['default']['batch_callbacks'][-1:] # remove data augmentation for validation
+        # TODO: think about how to make this robust for other data augmentation callbacks 
+        self.val_config['wholeslidedata']['default']['batch_callbacks'] = [cb for i, cb in enumerate(self.val_config['wholeslidedata']['default']['batch_callbacks']) if i != nnunet_callback_idx] # remove data augmentation for validation
 
         def half_crop(data):
             cropx = (data.shape[1] - data.shape[1]//2) // 2
@@ -405,8 +418,6 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
         else:
             iterator_class = WholeSlidePlainnnUnetHalfCropBatchIterator if self.sample_double else WholeSlidePlainnnUnetBatchIterator
 
-        # TODO: multiprocessing num cpus -2    
-        # cpus = 12 
         print('cpus used for iterators = ', cpus)
         print('[Creating batch iterators]')
         print('\t[Creating TRAIN batch iterator]')
@@ -625,6 +636,16 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
         empty_cache(self.device)
         self.print_to_log_file("Training done.")
 
+    def decode_buffer_states(self, state_array):
+        state_mappings = {
+            'FREE': 1,
+            'AVAILABLE': 2,
+            'RESERVED': 3,
+            'PROCESSING': 4
+        }
+        state_count = {state: np.sum(state_array == state_mappings[state]) for state in state_mappings}
+        return state_count
+
 ### RUN TRAINING        
     def run_training(self):
         try:
@@ -636,6 +657,9 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
                 self.on_train_epoch_start()
                 train_outputs = []
                 for batch_id in range(15 if self.time else self.num_iterations_per_epoch): 
+                    if batch_id % 10 == 0:
+                        state_array = self.dataloader_train._buffer_factory.buffer_state_memory.get_state_buffer()
+                        print(f'\t\tBUFFER STATES - batch {batch_id}: {self.decode_buffer_states(state_array)}')
                     train_outputs.append(self.train_step(next(self.dataloader_train))) 
                 self.on_train_epoch_end(train_outputs)
 
