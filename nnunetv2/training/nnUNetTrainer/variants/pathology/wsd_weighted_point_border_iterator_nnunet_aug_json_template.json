@@ -24,7 +24,7 @@
             "label_sampler": {
                 "labels": ""
             },
-            "point_sampler_name": "CentroidPointSampler",
+            "point_sampler_name": "RandomPointSampler",
             "batch_callbacks": [
                 {
                     "*object": "nnunetv2.training.nnUNetTrainer.variants.pathology.wsd_points_to_seg_callback.PointsToSegBatchCallbackInnerBorderTillCentroid",

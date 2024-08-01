@@ -19,3 +19,10 @@ class nnUNetTrainer_WSD_points_wei_i0_nnunet_aug_json(nnUNetTrainer_WSD_undefine
         self.wandb = True if 'WANDB_API_KEY' in os.environ else False
         self.aug = 'alb' if self.albumentations_aug else 'nnunet'
         self.iterator_template = f'wsd_{self.label_sampling_strategy}_point_iterator_{self.aug}_aug_json'
+
+    def modify_fill_template(self, fill_template):
+        point_to_seg_callback_name = "PointsToSegBatchCallback"
+        callback_idx = [fill_template['batch_callbacks'][i]['*object'].split('.')[-1] for i in range(len(fill_template['batch_callbacks']))].index(point_to_seg_callback_name)
+            
+        fill_template['batch_callbacks'][callback_idx]['point_sizes_dict'] = self.dataset_json["point_sizes_dict"]
+        fill_template['batch_callbacks'][callback_idx]['spacing'] = self.dataset_json["spacing"] if "spacing" in self.dataset_json else 0.5

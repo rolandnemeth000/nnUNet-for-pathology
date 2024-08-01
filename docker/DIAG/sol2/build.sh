@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="v0.02"
+VERSION="v0.04"
 
 
 NO_CACHE=""

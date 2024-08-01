@@ -24,17 +24,12 @@
             "label_sampler": {
                 "labels": ""
             },
-            "point_sampler_name": "CentroidPointSampler",
+            "point_sampler_name": "RandomPointSampler",
             "batch_callbacks": [
                 {
                     "*object": "nnunetv2.training.nnUNetTrainer.variants.pathology.wsd_points_to_seg_callback.PointsToSegBatchCallback",
-                        "point_sizes_dict": {
-                            "4": 7,
-                            "3": 9,
-                            "2": 9
-                        },
+                        "point_sizes_dict": "",
                         "spacing": 0.5},
-
                 {
                     "*object": "nnunetv2.training.nnUNetTrainer.variants.pathology.wsd_pathology_DA_callback.nnUnetBatchCallback",
                         "patch_size_spatial": []},
