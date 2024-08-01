@@ -509,12 +509,6 @@ class nnUNetPredictor(object):
         """
         This is an adjusted predict_logits_from_preprocessed_data function, where we get a list containing the logits of the ensemble's individual folds. 
         We want these separate instead of averaged so we can use them to calculate uncertainty/disagreement between the folds in the pathology inference pipeline. 
-        
-        IMPORTANT! IF YOU ARE RUNNING THE CASCADE, THE SEGMENTATION FROM THE PREVIOUS STAGE MUST ALREADY BE STACKED ON
-        TOP OF THE IMAGE AS ONE-HOT REPRESENTATION! SEE PreprocessAdapter ON HOW THIS SHOULD BE DONE!
-
-        RETURNED LOGITS HAVE THE SHAPE OF THE INPUT. THEY MUST BE CONVERTED BACK TO THE ORIGINAL IMAGE SIZE.
-        SEE convert_predicted_logits_to_segmentation_with_correct_shape
         """
         # we have some code duplication here but this allows us to run with perform_everything_on_gpu=True as
         # default and not have the entire program crash in case of GPU out of memory. Neat. That should make
