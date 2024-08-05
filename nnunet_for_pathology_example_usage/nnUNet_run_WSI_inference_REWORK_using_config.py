@@ -93,6 +93,7 @@ overwrite = config.overwrite # [READ THIS -->] this will always process and over
 spacing = config.spacing # spacing for batch_shape spacing and annotation_parser output_spacing (leave its processing spacing on 4 or higher)
 model_patch_size = config.model_patch_size # input size of model (should be square)
 sampler_patch_size = config.sampler_patch_size # use this as batch shape (= 8 * model_patch_size)
+cpus = config.cpus # number of cpus to use for sampling (note that buffer states are printed during inference time now, which may give you information about the number of cpus you should use, I noticed 1 is already enough to have a saturated buffer state when you sample: 4 * model_patch_size)
 
 ### WANDB
 use_wandb = config.use_wandb
@@ -229,6 +230,23 @@ def get_trim_indexes(y_batch):
 
     return trim_top_idx, trim_bottom_idx, trim_left_idx, trim_right_idx
 
+def decode_buffer_states(state_array, cpus):
+    state_mappings = {
+        'FREE': 1,
+        'AVAILABLE': 2,
+        'RESERVED': 3,
+        'PROCESSING': 4
+    }
+    state_count = {state: np.sum(state_array == state_mappings[state]) for state in state_mappings}
+    sum_states = sum(state_count.values())
+    if state_count['AVAILABLE'] + state_count['PROCESSING'] == sum_states:
+        message = ', your iterator buffer is saturated.\n\t\tIf you see this all the time you probably dont need this many CPUs for the processing_iterator. Currently using: {cpus} CPUs' + str(cpus)
+    elif (state_count['AVAILABLE'] == 0) or (state_count['AVAILABLE'] == 1):
+        message = ', your iterator buffer is empty or almost empty.\n\t\tIf you see this all the time you may benifit from using more CPUs for the processing_iterator. Currently using: {cpus} CPUs' + str(cpus)'
+    else: 
+        message = ''
+    return state_count, message
+
 def asap_validation(path):
     try:
         import multiresolutionimageinterface as mir
@@ -346,7 +364,7 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
         mask_path=mask_path,
         patch_configuration=patch_configuration,
         backend='asap',
-        cpus=4) as patch_iterator:
+        cpus=cpus) as patch_iterator:
 
         print('Iterator initiated', flush=True)
         print('Starting inference...\n\n', flush=True)
@@ -457,6 +475,11 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
                     "NORM_duration_total": (time_post_writing - time_pre_next) / (output_patch_size**2) 
                 })
                 
+            if idx_batch%10==0: 
+                state_array = patch_iterator._buffer_factory.buffer_state_memory.get_state_buffer()
+                state_count, message = decode_buffer_states(state_array, cpus)
+                print(f'\t\tBUFFER STATES (batch {idx_batch}): {state_count}, {message}', flush=True)
+
                 # time calling next start
             time_pre_next = time.time()
         print('[PROCESSED ALL TILES]', flush=True)

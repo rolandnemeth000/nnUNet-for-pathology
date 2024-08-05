@@ -114,6 +114,7 @@ overwrite = True # [READ THIS -->] this will always process and overwrite files,
 spacing = 0.5 # spacing for batch_shape spacing and annotation_parser output_spacing (leave its processing spacing on 4 or higher)
 model_patch_size = 512 # input size of model (should be square)
 sampler_patch_size = 4 * model_patch_size # use this as batch shape (= 8 * model_patch_size)
+cpus = 1 # number of cpus to use for sampling (note that buffer states are printed during inference time now, which may give you information about the number of cpus you should use, I noticed 1 is already enough to have a saturated buffer state when you sample: 4 * model_patch_size)
 
 ### WANDB
 use_wandb = False # If True put "export WANDB_API_KEY=<your key>"" in your .bashrc or .bash_profile
