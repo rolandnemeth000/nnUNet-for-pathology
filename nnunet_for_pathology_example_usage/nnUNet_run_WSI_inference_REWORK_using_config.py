@@ -240,9 +240,9 @@ def decode_buffer_states(state_array, cpus):
     state_count = {state: np.sum(state_array == state_mappings[state]) for state in state_mappings}
     sum_states = sum(state_count.values())
     if state_count['AVAILABLE'] + state_count['PROCESSING'] == sum_states:
-        message = ', your iterator buffer is saturated.\n\t\tIf you see this all the time you probably dont need this many CPUs for the processing_iterator. Currently using: {cpus} CPUs' + str(cpus)
+        message = ', your iterator buffer is saturated.\n\t\tIf you see this all the time you probably dont need this many CPUs for the processing_iterator. Currently using: {cpus} CPUs'
     elif (state_count['AVAILABLE'] == 0) or (state_count['AVAILABLE'] == 1):
-        message = ', your iterator buffer is empty or almost empty.\n\t\tIf you see this all the time you may benifit from using more CPUs for the processing_iterator. Currently using: {cpus} CPUs' + str(cpus)'
+        message = ', your iterator buffer is empty or almost empty.\n\t\tIf you see this all the time you may benifit from using more CPUs for the processing_iterator. Currently using: {cpus} CPUs'
     else: 
         message = ''
     return state_count, message
