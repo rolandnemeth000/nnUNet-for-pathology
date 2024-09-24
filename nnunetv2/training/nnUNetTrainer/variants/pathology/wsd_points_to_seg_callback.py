@@ -18,7 +18,7 @@ class PointsToSegBatchCallback:
     def find_coords_for_values(self, arr, values):
         # Using numpy to find coordinates for multiple values at once, reducing Python loop overhead
         unique_values = np.unique(arr)
-        values_to_find = np.intersect1d(unique_values, values)
+        values_to_find = [value for value in values if value in unique_values]
         coords_dict = {value: np.argwhere(arr == value) for value in values_to_find}
         return coords_dict
 
@@ -167,7 +167,6 @@ class PointsToSegBatchCallbackDoubleBorderRandomOrder(PointsToSegBatchCallback):
         self.centroid_size = centroid_size
         self.small_border_size = 1
         self.border_value = border_value if border_value is not None else max(int(k) for k in self.point_sizes_dict.keys()) + 1
-        print('SET', flush=True)
 
     def flatten_one_deep(self, nested_list):
         return [item for sublist in nested_list for item in sublist]
