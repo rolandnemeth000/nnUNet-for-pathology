@@ -55,11 +55,11 @@ def import_config(config_module_name):
 
     return config
 
-if len(sys.argv) != 2 and len(sys.argv) != 6:
-    print("Please provide a config stem as argument and optionally the input and output paths")
-    print("\t[Default config usage]: python nnUNet_run_WSI_inference_REWORK_using_config.py <config_stem>")
-    print('\tOR')
-    print("\t[Config usage + providing in and output paths]: python nnUNet_run_WSI_inference_REWORK_using_config.py <config_stem> <input_img> <input_mask> <output_inference_mask> <output_uncertainty_mask>")
+if len(sys.argv) != 2 and len(sys.argv) != 8:
+    print("\n\n\nINCORRECT FUNCTION CALL: \nPlease provide a config stem as argument and optionally the input and output paths")
+    print("\n[Default config usage]: \n\tpython nnUNet_run_WSI_inference_REWORK_using_config.py <config_stem>")
+    print('\nOR')
+    print("\n[Config usage + providing in and output paths]: \n\tpython nnUNet_run_WSI_inference_REWORK_using_config.py <config_stem> <input_img> <input_mask> <output_inference_mask> <output_uncertainty_CE_mask> <output_uncertainty_KL_mask> <output_uncertainty_entropy_mask>")
     sys.exit(1)
 
 config_module_name = sys.argv[1]
@@ -72,10 +72,10 @@ norm = config.norm
 output_minus_1 = config.output_minus_1
 
 ### OUTPUT FOLDER
-output_img, output_mask = (None, None) if len(sys.argv) == 2 else (sys.argv[4], sys.argv[5])
-if output_img is not None and output_mask is not None:
+output_img, output_unc_ce, output_unc_kl, output_unc_entropy = (None, None) if len(sys.argv) == 2 else (sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7])
+if output_img is not None and output_unc_ce is not None and output_unc_kl is not None and output_unc_entropy is not None:
     # Should have same parent
-    assert Path(output_img).parent == Path(output_mask).parent, "Output paths should have the same parent, since this is where the runtime files are stored"
+    assert Path(output_img).parent == Path(output_unc_ce).parent == Path(output_unc_kl).parent == Path(output_unc_entropy).parent, "Output paths should have the same parent, since this is where the runtime files are stored"
 output_folder = config.output_folder if len(sys.argv) == 2 else Path(output_img).parent
 local_output_folder = Path('/tmp/workdir')
 os.makedirs(output_folder, exist_ok=True)
@@ -163,16 +163,60 @@ def array_to_formatted_tensor(array):
     array = np.expand_dims(array.transpose(2, 0, 1), 0)
     return torch.tensor(array)
 
-def softmax_list_and_mean_to_uncertainty(softmax_list, softmax_mean):
-    loss = torch.nn.CrossEntropyLoss(reduction='none')
-    uncertainty_loss_per_pixel_list = []
-    for softmax in softmax_list:
-        log_softmax = np.log(softmax + 0.00000001)
-        uncertainty_loss_per_pixel = loss(array_to_formatted_tensor(log_softmax),
-                                          array_to_formatted_tensor(softmax_mean))
-        uncertainty_loss_per_pixel_list.append(uncertainty_loss_per_pixel)
-    uncertainty = torch.cat(uncertainty_loss_per_pixel_list).mean(dim=0)
-    return uncertainty
+# def softmax_list_and_mean_to_uncertainty(softmax_list, softmax_mean):
+#     loss = torch.nn.CrossEntropyLoss(reduction='none')
+#     uncertainty_loss_per_pixel_list = []
+#     for softmax in softmax_list:
+#         log_softmax = np.log(softmax + 0.00000001)
+#         uncertainty_loss_per_pixel = loss(array_to_formatted_tensor(log_softmax),
+#                                           array_to_formatted_tensor(softmax_mean))
+#         uncertainty_loss_per_pixel_list.append(uncertainty_loss_per_pixel)
+#     uncertainty = torch.cat(uncertainty_loss_per_pixel_list).mean(dim=0)
+#     return uncertainty
+
+def softmax_list_and_mean_to_uncertainties(softmax_list, softmax_mean):
+    softmax_mean_tensor = array_to_formatted_tensor(softmax_mean)
+
+    ce_loss = torch.nn.CrossEntropyLoss(reduction='none')
+    kl_div_loss = torch.nn.KLDivLoss(reduction='none')
+
+    # if plot:
+        # fig, ax = plt.subplots(1, 5, figsize=(25, 5))
+    uncertainty_loss_per_pixel_ce_list = []
+    uncertainty_loss_per_pixel_kl_list = []
+
+    for i, softmax in enumerate(softmax_list):
+        # if plot:
+            # ax[i].imshow(softmax.argmax(axis=-1)-output_minus_1, **label_plot_args)
+        log_softmax = np.log(softmax + 1e-8)
+        log_softmax_tensor = array_to_formatted_tensor(log_softmax)
+        # CE
+        uncertainty_loss_per_pixel_ce = ce_loss(log_softmax_tensor, softmax_mean_tensor)
+        uncertainty_loss_per_pixel_ce_list.append(uncertainty_loss_per_pixel_ce)
+        # KL / JS
+        uncertainty_loss_per_pixel_kl = kl_div_loss(log_softmax_tensor, softmax_mean_tensor).mean(dim=1)
+        uncertainty_loss_per_pixel_kl_list.append(uncertainty_loss_per_pixel_kl)
+    # if plot:
+        # display(fig)
+        # plt.show()
+
+    uncertainty_disagreement_ce = torch.cat(uncertainty_loss_per_pixel_ce_list).mean(dim=0)
+    uncertainty_disagreement_kl = torch.cat(uncertainty_loss_per_pixel_kl_list).mean(dim=0)
+
+    # Entropy
+    num_classes = softmax_mean_tensor.shape[1]
+    uncertainty_entropy_unnormalized = -torch.sum(softmax_mean_tensor * torch.log(softmax_mean_tensor + 1e-10), dim=1).squeeze()
+    uncertainty_entropy = uncertainty_entropy_unnormalized / np.log(num_classes)
+
+    # if plot:
+        # fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+        # ax[0].imshow(uncertainty_disagreement_ce, cmap='hot')
+        # ax[1].imshow(uncertainty_disagreement_kl, cmap='hot')
+        # ax[2].imshow(uncertainty_entropy, cmap='hot')
+        # # display(fig)
+        # plt.show()
+
+    return uncertainty_disagreement_ce, uncertainty_disagreement_kl, uncertainty_entropy
 
 def get_trim_indexes(y_batch):
     """
@@ -315,18 +359,21 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
     
     ### CHECK IF WE NEED TO PROCESS THIS FILE
     wsm_path = output_folder / (image_path.stem + '_nnunet.tif') if output_img is None else Path(output_img)
-    wsu_path = output_folder / (image_path.stem + '_uncertainty.tif') if output_mask is None else Path(output_mask)
+    # wsu_path = output_folder / (image_path.stem + '_uncertainty.tif') if output_mask is None else Path(output_mask)
+    wsu_ce_path = output_folder / (image_path.stem + '_ce_disagreement_uncertainty.tif') if output_unc_ce is None else Path(output_unc_ce)
+    wsu_kl_path = output_folder / (image_path.stem + '_kl_disagreement_uncertainty.tif') if output_unc_kl is None else Path(output_unc_kl)
+    wsu_entropy_path = output_folder / (image_path.stem + '_entropy_uncertainty.tif') if output_unc_entropy is None else Path(output_unc_entropy)
     if not overwrite:
         if os.path.isfile(output_folder / (image_path.stem + '_runtime.txt')):
             print(f'[SKIPPING] {image_path.stem} is processed already', flush=True)
             continue  # continue to next match
         if not rerun_unfinished:
-            if os.path.isfile(wsm_path) and os.path.isfile(wsu_path):
+            if os.path.isfile(wsm_path) and os.path.isfile(wsu_entropy_path):
                 print(f'[SKIPPING] {image_path.stem} is processed already or currently being processed', flush=True)
                 continue  # continue to next match
     # Immediately lock files
     open(wsm_path, 'w').close()
-    open(wsu_path, 'w').close()
+    open(wsu_ce_path, 'w').close()
 
     print(f'[RUNNING] {image_path.stem}\n', flush=True)
 
@@ -346,14 +393,26 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
     # Create new writer and file
     start_time = time.time()
     wsm_writer = WholeSlideMaskWriter()  # whole slide mask
-    wsu_writer = WholeSlideMaskWriter()  # whole slide uncertainty
+    # wsu_writer = WholeSlideMaskWriter()  # whole slide uncertainty
+    wsu_ce_writer = WholeSlideMaskWriter()  # whole slide uncertainty disagreement cross entropy
+    wsu_kl_writer = WholeSlideMaskWriter()  # whole slide uncertainty disagreement kl
+    wsu_entropy_writer = WholeSlideMaskWriter()  # whole slide uncertainty entropy
     # Create files
     wsm_path_local = local_output_folder / (image_path.stem + '_nnunet.tif')
-    wsu_path_local = local_output_folder / (image_path.stem + '_uncertainty.tif')
+    # wsu_path_local = local_output_folder / (image_path.stem + '_uncertainty.tif')
+    wsu_ce_path_local = local_output_folder / (image_path.stem + '_ce_disagreement_uncertainty.tif')
+    wsu_kl_path_local = local_output_folder / (image_path.stem + '_kl_disagreement_uncertainty.tif')
+    wsu_entropy_path_local = local_output_folder / (image_path.stem + '_entropy_uncertainty.tif')
     wsm_writer.write(path=wsm_path_local, spacing=real_spacing, dimensions=shape,
                     tile_shape=(output_patch_size, output_patch_size))
-    wsu_writer.write(path=wsu_path_local, spacing=real_spacing,
-                    dimensions=shape, tile_shape=(output_patch_size, output_patch_size))
+    # wsu_writer.write(path=wsu_path_local, spacing=real_spacing,
+    #                 dimensions=shape, tile_shape=(output_patch_size, output_patch_size))
+    wsu_ce_writer.write(path=wsu_ce_path_local, spacing=real_spacing,
+                        dimensions=shape, tile_shape=(output_patch_size, output_patch_size))
+    wsu_kl_writer.write(path=wsu_kl_path_local, spacing=real_spacing,
+                        dimensions=shape, tile_shape=(output_patch_size, output_patch_size))
+    wsu_entropy_writer.write(path=wsu_entropy_path_local, spacing=real_spacing,
+                            dimensions=shape, tile_shape=(output_patch_size, output_patch_size))
 
     #################################################################
     ### RUN
@@ -413,8 +472,11 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
             ### Uncertainty
                 # time uncertainty start
             time_pre_uncertainty = time.time()
-            uncertainty = softmax_list_and_mean_to_uncertainty(softmax_list, softmax_mean)
-            uncertainty_output_maybe_trimmed = np.array((uncertainty.clip(0, 4) / 4 * 255).int()) 
+            # uncertainty = softmax_list_and_mean_to_uncertainty(softmax_list, softmax_mean)
+            uncertainty_disagreement_ce, uncertainty_disagreement_kl, uncertainty_entropy = softmax_list_and_mean_to_uncertainties(softmax_list, softmax_mean)
+            uncertainty_disagreement_ce_output_maybe_trimmed = np.array((uncertainty_disagreement_ce.clip(0, 4) / 4 * 255).int()) 
+            uncertainty_disagreement_kl_output_maybe_trimmed = np.array((uncertainty_disagreement_kl * 255).int())
+            uncertainty_entropy_output_maybe_trimmed = np.array((uncertainty_entropy * 255).int())
             time_post_uncertainty = time.time()
             duration_uncertainty = time_post_uncertainty - time_pre_uncertainty
                 # time uncertainty end
@@ -426,11 +488,20 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
             # Reconstruct possible trim
             pred_output = np.zeros((sampler_patch_size, sampler_patch_size))
             pred_output[trim_top_idx : trim_bottom_idx, trim_left_idx: trim_right_idx] = pred_output_maybe_trimmed
-            uncertainty_output = np.zeros((sampler_patch_size, sampler_patch_size))
-            uncertainty_output[trim_top_idx: trim_bottom_idx, trim_left_idx: trim_right_idx] = uncertainty_output_maybe_trimmed
+            # uncertainty_output = np.zeros((sampler_patch_size, sampler_patch_size))
+            # uncertainty_output[trim_top_idx: trim_bottom_idx, trim_left_idx: trim_right_idx] = uncertainty_output_maybe_trimmed
+            uncertainty_disagreement_ce_output = np.zeros((sampler_patch_size, sampler_patch_size))
+            uncertainty_disagreement_ce_output[trim_top_idx: trim_bottom_idx, trim_left_idx: trim_right_idx] = uncertainty_disagreement_ce_output_maybe_trimmed
+            uncertainty_disagreement_kl_output = np.zeros((sampler_patch_size, sampler_patch_size))
+            uncertainty_disagreement_kl_output[trim_top_idx: trim_bottom_idx, trim_left_idx: trim_right_idx] = uncertainty_disagreement_kl_output_maybe_trimmed
+            uncertainty_entropy_output = np.zeros((sampler_patch_size, sampler_patch_size))
+            uncertainty_entropy_output[trim_top_idx: trim_bottom_idx, trim_left_idx: trim_right_idx] = uncertainty_entropy_output_maybe_trimmed
             # Only write inner part
             pred_output_inner = crop_data(pred_output, [output_patch_size, output_patch_size])
-            uncertainty_output_inner = crop_data(uncertainty_output, [output_patch_size, output_patch_size])
+            # uncertainty_output_inner = crop_data(uncertainty_output, [output_patch_size, output_patch_size])
+            uncertainty_disagreement_ce_output_inner = crop_data(uncertainty_disagreement_ce_output, [output_patch_size, output_patch_size])
+            uncertainty_disagreement_kl_output_inner = crop_data(uncertainty_disagreement_kl_output, [output_patch_size, output_patch_size])
+            uncertainty_entropy_output_inner = crop_data(uncertainty_entropy_output, [output_patch_size, output_patch_size])
             y_batch_inner = crop_data(y_batch[0], [output_patch_size, output_patch_size]).astype('int64')
             # Get patch point
             x_coord, y_coord = info['x']//downsampling, info['y']//downsampling # convert coordinates to writing spacing
@@ -444,7 +515,10 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
                 # time writing start
             time_pre_writing = time.time()
             wsm_writer.write_tile(tile=pred_output_inner * y_batch_inner, coordinates=(int(x_coord), int(y_coord)))
-            wsu_writer.write_tile(tile=uncertainty_output_inner * y_batch_inner, coordinates=(int(x_coord), int(y_coord)))
+            # wsu_writer.write_tile(tile=uncertainty_output_inner * y_batch_inner, coordinates=(int(x_coord), int(y_coord)))
+            wsu_ce_writer.write_tile(tile=uncertainty_disagreement_ce_output_inner * y_batch_inner, coordinates=(int(x_coord), int(y_coord)))
+            wsu_kl_writer.write_tile(tile=uncertainty_disagreement_kl_output_inner * y_batch_inner, coordinates=(int(x_coord), int(y_coord)))
+            wsu_entropy_writer.write_tile(tile=uncertainty_entropy_output_inner * y_batch_inner, coordinates=(int(x_coord), int(y_coord)))
             time_post_writing = time.time()
             duration_writing = time_post_writing - time_pre_writing
                 # time writing end
@@ -482,7 +556,7 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
 
                 # time calling next start
             time_pre_next = time.time()
-        print('[PROCESSED ALL TILES]', flush=True)
+        print('[PROCESSED ALL TILES]\n\n', flush=True)
 
     # Save runtime
     end_time = time.time()
@@ -491,31 +565,75 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
     text_file.write(str(run_time))
     text_file.close()
 
-    print('[WRITING, VALIDATING, and TRANSFERING] inference and uncertainty masks', flush=True)
+    print('[WRITING, VALIDATING, and TRANSFERING] inference and uncertainty masks\n', flush=True)
     wsm_writer.save()  # if done save image
     print(f'Verification of written inference:', wsm_path_local, flush=True)
     if asap_validation(wsm_path_local):
-        print('/tVerification successful', flush=True)
-        print(f'/tCopying {wsm_path_local} to {wsm_path}', flush=True) 
+        print('\tVerification successful', flush=True)
+        print(f'\tCopying {wsm_path_local} to {wsm_path}\n\n', flush=True) 
         shutil.copyfile(wsm_path_local, wsm_path)
     else:
-        print('/tVerification failed', flush=True)
-        print(f'/tRemoving initialized {wsm_path}, {wsm_path} and {text_file}', flush=True)
+        print('\tVerification failed', flush=True)
+        print(f'\tRemoving initialized {wsm_path}, {wsu_ce_path}, {wsu_kl_path}, {wsu_entropy_path} and {text_file}', flush=True)
         os.remove(wsm_path)
-        os.remove(wsu_path)
+        os.remove(wsu_ce_path)
+        os.remove(wsu_kl_path)
+        os.remove(wsu_entropy_path)
         os.remove(text_file)
         sys.exit(1)
 
-    wsu_writer.save()  # if done save image
-    if asap_validation(wsu_path_local):
-        print('/tVerification successful', flush=True)
-        print(f'/tCopying {wsu_path_local} to {wsu_path}', flush=True) 
-        shutil.copyfile(wsu_path_local, wsu_path)
+    # wsu_writer.save()  # if done save image
+    # if asap_validation(wsu_path_local):
+    #     print('\tVerification successful', flush=True)
+    #     print(f'\tCopying {wsu_path_local} to {wsu_path}', flush=True) 
+    #     shutil.copyfile(wsu_path_local, wsu_path)
+    # else:
+    #     print('\tVerification failed', flush=True)
+    #     print(f'\tRemoving initialized {wsm_path}, {wsm_path} and {text_file}', flush=True)
+    #     os.remove(wsm_path)
+    #     os.remove(wsu_path)
+    #     os.remove(text_file)
+    #     sys.exit(1)
+    wsu_ce_writer.save()  # if done save image
+    if asap_validation(wsu_ce_path_local):
+        print('\tVerification successful', flush=True)
+        print(f'\tCopying {wsu_ce_path_local} to {wsu_ce_path}\n\n', flush=True) 
+        shutil.copyfile(wsu_ce_path_local, wsu_ce_path)
     else:
-        print('/tVerification failed', flush=True)
-        print(f'/tRemoving initialized {wsm_path}, {wsm_path} and {text_file}', flush=True)
+        print('\tVerification failed', flush=True)
+        print(f'\tRemoving initialized {wsm_path}, {wsu_ce_path}, {wsu_kl_path}, {wsu_entropy_path} and {text_file}', flush=True)
         os.remove(wsm_path)
-        os.remove(wsu_path)
+        os.remove(wsu_ce_path)
+        os.remove(wsu_kl_path)
+        os.remove(wsu_entropy_path)
+        os.remove(text_file)
+        sys.exit(1)
+    wsu_kl_writer.save()  # if done save image
+    if asap_validation(wsu_kl_path_local):
+        print('\tVerification successful', flush=True)
+        print(f'\tCopying {wsu_kl_path_local} to {wsu_kl_path}\n\n', flush=True) 
+        shutil.copyfile(wsu_kl_path_local, wsu_kl_path)
+    else:
+        print('\tVerification failed', flush=True)
+        print(f'\tRemoving initialized {wsm_path}, {wsu_ce_path}, {wsu_kl_path}, {wsu_entropy_path} and {text_file}', flush=True)
+        os.remove(wsm_path)
+        os.remove(wsu_ce_path)
+        os.remove(wsu_kl_path)
+        os.remove(wsu_entropy_path)
+        os.remove(text_file)
+        sys.exit(1)
+    wsu_entropy_writer.save()  # if done save image
+    if asap_validation(wsu_entropy_path_local):
+        print('\tVerification successful', flush=True)
+        print(f'\tCopying {wsu_entropy_path_local} to {wsu_entropy_path}\n\n', flush=True) 
+        shutil.copyfile(wsu_entropy_path_local, wsu_entropy_path)
+    else:
+        print('\tVerification failed', flush=True)
+        print(f'\tRemoving initialized {wsm_path}, {wsu_ce_path}, {wsu_kl_path}, {wsu_entropy_path} and {text_file}', flush=True)
+        os.remove(wsm_path)
+        os.remove(wsu_ce_path)
+        os.remove(wsu_kl_path)
+        os.remove(wsu_entropy_path)
         os.remove(text_file)
         sys.exit(1)
 
