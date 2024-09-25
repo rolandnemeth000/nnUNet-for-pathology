@@ -67,12 +67,12 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
         self.albumentations_aug = None
         self.label_sampling_strategy = None #'roi' # 'balanced' # 'weighted' 
         self.sample_double = None # this means we for example sample 1024x1024, augment, and return 512x512 center crop to remove artifacts induced by zooming and rotating, not needed if using albumentations_aug
-        self.cpus = None
 
         # AUTO
         self.wandb = True if 'WANDB_API_KEY' in os.environ else False
         self.aug = 'alb' if self.albumentations_aug else 'nnunet'
         self.iterator_template = f'wsd_{self.label_sampling_strategy}_iterator_{self.aug}_aug'
+        self.cpus = 4
 ###
         # super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         
@@ -240,12 +240,23 @@ class nnUNetTrainer_WSD_undefined_dataloader(nnUNetTrainer):
             dic = dic.setdefault(key, {})
         dic[keys[-1]] = value
 
-### GET DATALOADERS - as generator objects
-    def get_dataloaders(self, subset=False, sample_double=False, cpus=7):
-        
+    ### GET DATALOADERS - as generator objects
+    def get_dataloaders(self, subset=False, sample_double=False, cpus=None):
+        # Check if cpus is provided in function call
+        if cpus is not None:
+            print(f'[CPUs] Overruling with provided cpus: {cpus}')
+        else:
+            # Check if 'cpus' is specified in self.dataset_json
+            if 'cpus' in self.dataset_json:
+                cpus = self.dataset_json['cpus']
+                print(f'[CPUs] Using cpus from dataset_json: {cpus}')
+            else:
+                # Default to 4 if not specified in dataset_json
+                cpus = 4
+                print(f'[CPUs] Defaulting to 4')
+
         if subset:
             print('\n\n\n\nUSING DATA SUBSET\n\n\n\n')
-        
         self.do_split()
         
         # return None, None
