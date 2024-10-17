@@ -19,14 +19,14 @@
 #################################################################
 
 import os
+import sys
 import shutil
+import importlib
 from pathlib import Path
-import pandas as pd
 import numpy as np
 import torch
 import time
 import wandb
-
 
 from wholeslidedata.image.wholeslideimage import WholeSlideImage
 from wholeslidedata.iterators.patchiterator import create_patch_iterator
@@ -38,44 +38,104 @@ from nnunetv2.utilities.file_path_utilities import load_json
 from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 
 #################################################################
+### CONFIG IMPORT
+#################################################################
+
+def import_config(config_module_name):
+    # Ensure that the cohort_configs directory is in the system path
+    config_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inference_configs')
+    print(config_dir)
+    if config_dir not in sys.path:
+        sys.path.append(config_dir)
+
+    try:
+        config = importlib.import_module(config_module_name)
+    except ModuleNotFoundError:
+        print(f"Configuration module {config_module_name} not found in configs folder.")
+        sys.exit(1)
+
+    return config
+
+if len(sys.argv) != 2 and len(sys.argv) != 8:
+    print("\n\n\nINCORRECT FUNCTION CALL: \nPlease provide a config stem as argument and optionally the input and output paths")
+    print("\n[Default config usage]: \n\tpython nnUNet_run_WSI_inference_REWORK_using_config.py <config_stem>")
+    print('\nOR')
+    print("\n[Config usage + providing in and output paths]: \n\tpython nnUNet_run_WSI_inference_REWORK_using_config.py <config_stem> <input_img> <input_mask> <output_inference_mask> <output_uncertainty_CE_mask> <output_uncertainty_KL_mask> <output_uncertainty_entropy_mask>")
+    sys.exit(1)
+
+config_module_name = sys.argv[1]
+config = import_config(config_module_name)
+
+### TASK AND MODEL STUFF'
+model_base_path = config.model_base_path
+
+norm = config.norm 
+output_minus_1 = config.output_minus_1
+
+### OUTPUT FOLDER
+output_img, output_mask = (None, None) if len(sys.argv) == 2 else (sys.argv[4], sys.argv[5])
+if output_img is not None and output_mask is not None:
+    # Should have same parent
+    assert Path(output_img).parent == Path(output_mask).parent, "Output paths should have the same parent, since this is where the runtime files are stored"
+output_folder = config.output_folder if len(sys.argv) == 2 else Path(output_img).parent
+local_output_folder = Path('/tmp/workdir')
+os.makedirs(output_folder, exist_ok=True)
+os.makedirs(local_output_folder, exist_ok=True)
+
+### MATCHES YOU WANT TO RUN
+# This is a list of tuples, where each tuple contains the path to the wsi and the path to the tissue mask
+# Example: [('path/to/wsi1', 'path/to/tissue_mask1'), ('path/to/wsi2', 'path/to/tissue_mask2')]
+matches_to_run = config.matches_to_run if len(sys.argv) == 2 else [(sys.argv[2], sys.argv[3])]
+
+rerun_unfinished = config.rerun_unfinished # [READ THIS -->] this will check if the '<stem>_runtime.txt file is present in the outputfolder. If it is not it means that this file is not processed fully. IMPORTANT: if this is set to True multiple parallel jobs cannot track which slides are being processed, set this to false if you want to run multiple jobs in a parralel way. Alternatively, remove all unfinished files in the output folder (the files that do nt have a .runtime.txt file). Default is False 
+overwrite = config.overwrite # [READ THIS -->] this will always process and overwrite files, even if they are already processed. May break logic if you have multiple jobs running in parallel. Default is False
+
+### SAMPLING STUFF
+spacing = config.spacing # spacing for batch_shape spacing and annotation_parser output_spacing (leave its processing spacing on 4 or higher)
+model_patch_size = config.model_patch_size # input size of model (should be square)
+sampler_patch_size = config.sampler_patch_size # use this as batch shape (= 8 * model_patch_size)
+cpus = getattr(config, 'cpus', 1) # number of cpus to use for sampling (note that buffer states are printed during inference time now, which may give you information about the number of cpus you should use, I noticed 1 is already enough to have a saturated buffer state when you sample: 4 * model_patch_size)
+
+### WANDB
+use_wandb = config.use_wandb
+if use_wandb:
+    wandb_api_key = os.environ.get('WANDB_API_KEY')
+    if wandb_api_key is None:
+        print("WANDB_API_KEY not found in environment variables. Please put 'export WANDB_API_KEY=<your key>' in your .bashrc or .bash_profile")
+        print("Aborting...")
+        sys.exit(1) 
+
+#################################################################
 ### Functions and utilities
 #################################################################
 current_os = "w" if os.name == "nt" else "l"
 other_os = "l" if current_os == "w" else "w"
 
 def convert_path(path, to=current_os):
-    """
-    This function converts paths to the format of the desired platform.
-    By default it changes paths to the platform you are cyurerntly using.
+    '''
+    This function converts paths to the format of the desired platform. 
+    By default it changes paths to the platform you are currently using.
     This way you do not need to change your paths if you are executing your code on a different platform.
-    It may however be that you mounted the drives differently.
-    In that case you may need to change that in the code below.
-    """
+    It may however be that you mounted the drives differently. 
+    In that case you may need to change that in the code below. 
+    For example, change the Z for blissey (where I mounted it) to X (how you may have mounted it)
+    If you add a linux path on a linux platform, or windows on windows, this function by default doesnt do anything.
+    '''
     if to in ["w", "win", "windows"]:
-        path = path.replace("/mnt/pa_cpg", "Y:")
         path = path.replace("/data/pathology", "Z:")
-        path = path.replace("/mnt/pa_cpgarchive1", "W:")
-        path = path.replace("/mnt/pa_cpgarchive2", "X:")
+        path = path.replace("/data/pa_cpgarchive1", "W:")
+        path = path.replace("/data/pa_cpgarchive2", "X:")
+        path = path.replace("/data/pa_cpg", "Y:")
+        path = path.replace("/data/temporary", "T:")
         path = path.replace("/", "\\")
     if to in ["u", "unix", "l", "linux"]:
-        path = path.replace("Y:", "/mnt/pa_cpg")
         path = path.replace("Z:", "/data/pathology")
-        path = path.replace("W:", "/mnt/pa_cpgarchive1")
-        path = path.replace("X:", "/mnt/pa_cpgarchive2")
+        path = path.replace("W:", "/data/pa_cpgarchive1")
+        path = path.replace("X:", "/data/pa_cpgarchive2")
+        path = path.replace("Y:", "/data/pa_cpg")
+        path = path.replace("T:", "/data/temporary")
         path = path.replace("\\", "/")
     return path
-
-def norm_01(x_batch): # Use this for models trained on 0-1 scaled data
-    x_batch = x_batch / 255
-    x_batch = x_batch.transpose(3, 0, 1, 2)
-    return x_batch
-
-def z_norm(x_batch): # use this for default nnunet models, using z-score normalized data
-    mean = x_batch.mean(axis=(-2,-1), keepdims=True)
-    std = x_batch.std(axis=(-2,-1), keepdims=True)
-    x_batch = ((x_batch - mean) / (std + 1e-8))
-    x_batch = x_batch.transpose(3, 0, 1, 2)
-    return x_batch
 
 def ensemble_softmax_list(x_batch):
     logits_list = predictor.get_logits_list_from_preprocessed_data(torch.tensor(x_batch, dtype=torch.float32))
@@ -154,69 +214,36 @@ def get_trim_indexes(y_batch):
 
     return trim_top_idx, trim_bottom_idx, trim_left_idx, trim_right_idx
 
-def csv_to_matches(path_df):
-    df = pd.read_csv(path_df)
-    if len(df.columns) > 2:
-        raise ValueError("The DataFrame should have only 2 columns: first contains image path and second contains mask path.")
-    matches = list(df.itertuples(index=False, name=None))
-    return matches
+def decode_buffer_states(state_array, cpus):
+    state_mappings = {
+        'FREE': 1,
+        'AVAILABLE': 2,
+        'RESERVED': 3,
+        'PROCESSING': 4
+    }
+    state_count = {state: np.sum(state_array == state_mappings[state]) for state in state_mappings}
+    sum_states = sum(state_count.values())
+    if state_count['AVAILABLE'] + state_count['PROCESSING'] == sum_states:
+        message = f', your iterator buffer is saturated.\n\t\tIf you see this all the time you probably dont need this many CPUs for the processing_iterator. Currently using: {cpus} CPUs'
+    elif (state_count['AVAILABLE'] == 0) or (state_count['AVAILABLE'] == 1):
+        message = f', your iterator buffer is empty or almost empty.\n\t\tIf you see this all the time you may benifit from using more CPUs for the processing_iterator. Currently using: {cpus} CPUs'
+    else: 
+        message = ''
+    return state_count, message
 
-def return_matches_to_run(matches, output_folder):
-    """
-    The whole pipeline is costructed in such a way that a <name>_runtime.txt file is created once a python script started to work on this WSI + mask match. This means that this file should not be processed anymore by another python script that is run in parralel (also doesnt need to be copied to the local machine (chis is the case on our computing cluster))
-    """
-    runtime_stems = [file[:-12] for file in os.listdir(output_folder) if file.endswith('_runtime.txt')]
-    imgs, _ = zip(*matches)
-    img_stems = [Path(file).stem for file in imgs]
-    matches_to_run_idx = [i for i in range(len(img_stems)) if img_stems[i] not in runtime_stems]
-    matches_to_run = [matches[i] for i in matches_to_run_idx]
-
-    if len(matches_to_run) == 0:
-        print(f"\nAll files have been processed already, see {output_folder}")
-    else:
-        print(f"\nReturning {len(matches_to_run)} matches that are not finished yet")
-    return matches_to_run
-
-#################################################################
-### CHANGE THINGS HERE
-#################################################################
-
-### MODEL SETTINGS
-model_base_path = '/data/pathology/projects/pathology-lung-TIL/nnUNet_v2/data/nnUNet_results/Dataset008_PDL1_simplified_and_union_annotations/nnUNetTrainer_WSD_wei_i0_nnunet_aug__nnUNetWholeSlideDataPlans__wsd_None_iterator_nnunet_aug__2d'
-norm = norm_01 # z_norm or norm_01, norm_01 for models trained on 0-1 scaled data, z_norm for default nnunet models, using z-score normalized data 
-output_minus_1 = True # Set to True if you want to subtract 1 from the argmax (for example when label 0 is ignore and label 1 is background, which you want to be 0 for visualisation purposes)
-
-### OUTPUT FOLDER AND DATASET NAME
-dataset_name = 'V2_PDL1_test' # name that gets added to folder names and file names
-output_folder = Path('/data/pathology/projects/pathology-lung-TIL/nnUNet_raw_data_base/inference_results/v2_Task008_PDL1_simplified_and_union_annotations_wei_i0_nnunet_aug_TEST_SET')
-local_output_folder = Path('/home/user/workdir')
-os.makedirs(output_folder, exist_ok=True)
-os.makedirs(local_output_folder, exist_ok=True)
-
-### MATCHES YOU WANT TO RUN
-# This is a list of tuples, where each tuple contains the path to the wsi and the path to the tissue mask
-# Example: [('path/to/wsi1', 'path/to/tissue_mask1'), ('path/to/wsi2', 'path/to/tissue_mask2')]
-all_matches = csv_to_matches(convert_path(r"Z:\archives\lung\ignite_retrospective_radboudumc\csv\TEMP_he_mask_paths.csv"))
-matches_to_run = return_matches_to_run(all_matches, output_folder)
-
-# image_path = convert_path(r"Z:\archives\lung\pembro_rt\images\HE\IG_S02_P000001_C0001_B101_V01_T01_L01_A15_E02.tif")
-# mask_path = convert_path(r"Z:\archives\lung\pembro_rt\tissue_masks\HE\IG_S02_P000001_C0001_B101_V01_T01_L01_A15_E02_tissue.tif")
-# matches_to_run = [(image_path, mask_path),]
-
-rerun_unfinished = False # [READ THIS -->] this will check if the '<stem>_runtime.txt file is present in the outputfolder. If it is not it means that this file is not processed fully. IMPORTANT: if this is set to True multiple parallel jobs cannot track which slides are being processed, set this to false if you want to run multiple jobs in a parralel way. Alternatively, remove all unfinished files in the output folder (the files that do nt have a .runtime.txt file). Default is False 
-
-### SAMPLING STUFF
-spacing = 0.5 # spacing for batch_shape spacing and annotation_parser output_spacing (leave its processing spacing on 4 or higher)
-model_patch_size = 512 # input size of model (should be square)
-sampler_patch_size = 4 * model_patch_size # size of the sampled patch
-
-### WANDB
-wandb = False
-wandb_api_key = ''
-
-#################################################################
-### AUTOMATIC STUFF (no need to change things below)
-#################################################################
+def asap_validation(path):
+    try:
+        import multiresolutionimageinterface as mir
+        reader = mir.MultiResolutionImageReader()
+        print(f"ASAP validation of {path}")
+        wsi = reader.open(str(path))
+        if wsi is None:
+            return False
+        else:
+            return wsi.valid()
+    except Exception as e:
+        print(f"ASAP validation error: {e}")
+        return False
 
 #################################################################
 ### LOAD MODEL
@@ -226,6 +253,8 @@ print(model_base_path, '\n')
 
 plans_dict = load_json(os.path.join(model_base_path, 'plans.json'))
 dataset_dict = load_json(os.path.join(model_base_path, 'dataset.json'))
+
+# trainer = nnUNetTrainer_custom_dataloader_test(plans_dict, '2d', 0, dataset_dict) # we need a trainer for a single fold to make use of its inbuilt functions
 
 predictor = nnUNetPredictor(
     tile_step_size=0.5,
@@ -261,7 +290,7 @@ wsm_writer = None
 #################################################################
 ### WANDB
 #################################################################
-if wandb:
+if use_wandb:
     import datetime
     print('Wandb init')
     date = datetime.datetime.now().strftime("%Y%m%d")
@@ -277,18 +306,22 @@ if wandb:
 ##################################################################################################################################
 print('\n\n\n####### START OF LOOP #######')
 for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
+    image_path = Path(image_path)
+    mask_path = Path(mask_path)
+
     print(f'\n[NEXT MATCH] [{idx_match}/{len(matches_to_run)})]:', '\n\t', image_path, mask_path)
     
     ### CHECK IF WE NEED TO PROCESS THIS FILE
     wsm_path = output_folder / (image_path.stem + '_nnunet.tif')
     wsu_path = output_folder / (image_path.stem + '_uncertainty.tif')
-    if rerun_unfinished:
+    if not overwrite:
         if os.path.isfile(output_folder / (image_path.stem + '_runtime.txt')):
             print(f'[SKIPPING] {image_path.stem} is processed already', flush=True)
             continue  # continue to next match
-    if os.path.isfile(wsm_path) and os.path.isfile(wsu_path):
-        print(f'[SKIPPING] {image_path.stem} is processed already or currently being processed', flush=True)
-        continue  # continue to next match
+        if not rerun_unfinished:
+            if os.path.isfile(wsm_path) and os.path.isfile(wsu_path):
+                print(f'[SKIPPING] {image_path.stem} is processed already or currently being processed', flush=True)
+                continue  # continue to next match
     # Immediately lock files
     open(wsm_path, 'w').close()
     open(wsu_path, 'w').close()
@@ -306,7 +339,8 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
                                             spacings=(spacing,),
                                             overlap=(model_patch_size,model_patch_size),
                                             offset=(int(offset), int(offset)),
-                                            center=True)
+                                            center=True,
+                                            write_shape=(output_patch_size, output_patch_size))
 
     # Create new writer and file
     start_time = time.time()
@@ -418,7 +452,7 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
             duration_patch_processing = time_post_patch_processing - time_pre_patch_processing
                 # time patch processing end
 
-            if wandb:
+            if use_wandb:
                 print("\t\t[LOGGING] to wandb")
                 wandb.log({
                     "duration_next": duration_next,
@@ -439,15 +473,14 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
                     "NORM_duration_total": (time_post_writing - time_pre_next) / (output_patch_size**2) 
                 })
                 
+            if idx_batch%10==0: 
+                state_array = patch_iterator._buffer_factory.buffer_state_memory.get_state_buffer()
+                state_count, message = decode_buffer_states(state_array, cpus)
+                print(f'\t\tBUFFER STATES (batch {idx_batch}): {state_count}, {message}', flush=True)
+
                 # time calling next start
             time_pre_next = time.time()
-        print('[PROCESSED ALL TILES]', flush=True)
-
-    print('[WRITING and TRANSFERING] inference and uncertainty masks', flush=True)
-    wsm_writer.save()  # if done save image
-    shutil.copyfile(wsm_path_local, wsm_path)
-    wsu_writer.save()  # if done save image
-    shutil.copyfile(wsu_path_local, wsu_path)
+        print('[PROCESSED ALL TILES]\n\n', flush=True)
 
     # Save runtime
     end_time = time.time()
@@ -455,8 +488,42 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
     text_file = open(output_folder / (image_path.stem + '_runtime.txt'), "w")
     text_file.write(str(run_time))
     text_file.close()
+
+    print('[WRITING, VALIDATING, and TRANSFERING] inference and uncertainty masks\n', flush=True)
+    wsm_writer.save()  # if done save image
+    print(f'Verification of written inference:', wsm_path_local, flush=True)
+    if asap_validation(wsm_path_local):
+        print('\tVerification successful', flush=True)
+        print(f'\tCopying {wsm_path_local} to {wsm_path}\n\n', flush=True) 
+        shutil.copyfile(wsm_path_local, wsm_path)
+    else:
+        print('\tVerification failed', flush=True)
+        print(f'\tRemoving initialized {wsm_path} and {wsu_path}', flush=True)
+        os.remove(wsm_path)
+        os.remove(wsu_path)
+        os.remove(text_file)
+        sys.exit(1)
+
+    wsu_writer.save()  # if done save image
+    if asap_validation(wsu_path_local):
+        print('\tVerification successful', flush=True)
+        print(f'\tCopying {wsu_path_local} to {wsu_path}\n\n', flush=True) 
+        shutil.copyfile(wsu_path_local, wsu_path)
+    else:
+        print('\tVerification failed', flush=True)
+        print(f'\tRemoving initialized {wsm_path} and {wsu_path}', flush=True)
+        os.remove(wsm_path)
+        os.remove(wsu_path)
+        os.remove(text_file)
+        sys.exit(1)
+
+    patch_iterator.stop()
+
 if wsm_writer == None:
     print('\n\n[NO FILES TO PROCESS] \n\n\n', flush=True)
 
-print('[COMPLETELY DONE]\nIf there are remaining files that are not being processed right now, set "rerun_unfinished" to True right above the ### RUN section')
-print('\n\n\n[Potential incoming multiprocessing error]\n\n')
+print('[COMPLETELY DONE]\nIf there are remaining files that are not being processed right now, set "rerun_unfinished" to True in your config ### RUN section')
+print('\n\n\n[Potential incoming multiprocessing error] still exiting with exit status 0\n\n')
+
+# Exit successfully
+sys.exit(0)
