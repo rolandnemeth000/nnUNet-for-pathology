@@ -137,18 +137,6 @@ def convert_path(path, to=current_os):
         path = path.replace("\\", "/")
     return path
 
-# def norm_01(x_batch): # Use this for models trained on 0-1 scaled data
-#     x_batch = x_batch / 255
-#     x_batch = x_batch.transpose(3, 0, 1, 2)
-#     return x_batch
-
-# def z_norm(x_batch): # use this for default nnunet models, using z-score normalized data
-#     mean = x_batch.mean(axis=(-2,-1), keepdims=True)
-#     std = x_batch.std(axis=(-2,-1), keepdims=True)
-#     x_batch = ((x_batch - mean) / (std + 1e-8))
-#     x_batch = x_batch.transpose(3, 0, 1, 2)
-#     return x_batch
-
 def ensemble_softmax_list(trainer, params, x_batch):
     softmax_list = []
     for p in params:

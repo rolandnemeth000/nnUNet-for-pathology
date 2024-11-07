@@ -72,7 +72,7 @@ norm = config.norm
 output_minus_1 = config.output_minus_1
 
 ### OUTPUT FOLDER
-output_img, output_unc_ce, output_unc_kl, output_unc_entropy = (None, None) if len(sys.argv) == 2 else (sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7])
+output_img, output_unc_ce, output_unc_kl, output_unc_entropy = (None, None, None, None) if len(sys.argv) == 2 else (sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7])
 if output_img is not None and output_unc_ce is not None and output_unc_kl is not None and output_unc_entropy is not None:
     # Should have same parent
     assert Path(output_img).parent == Path(output_unc_ce).parent == Path(output_unc_kl).parent == Path(output_unc_entropy).parent, "Output paths should have the same parent, since this is where the runtime files are stored"
@@ -137,18 +137,6 @@ def convert_path(path, to=current_os):
         path = path.replace("\\", "/")
     return path
 
-# def norm_01(x_batch): # Use this for models trained on 0-1 scaled data
-#     x_batch = x_batch / 255
-#     x_batch = x_batch.transpose(3, 0, 1, 2)
-#     return x_batch
-
-# def z_norm(x_batch): # use this for default nnunet models, using z-score normalized data
-#     mean = x_batch.mean(axis=(-2,-1), keepdims=True)
-#     std = x_batch.std(axis=(-2,-1), keepdims=True)
-#     x_batch = ((x_batch - mean) / (std + 1e-8))
-#     x_batch = x_batch.transpose(3, 0, 1, 2)
-#     return x_batch
-
 def ensemble_softmax_list(trainer, params, x_batch):
     softmax_list = []
     for p in params:
@@ -163,31 +151,16 @@ def array_to_formatted_tensor(array):
     array = np.expand_dims(array.transpose(2, 0, 1), 0)
     return torch.tensor(array)
 
-# def softmax_list_and_mean_to_uncertainty(softmax_list, softmax_mean):
-#     loss = torch.nn.CrossEntropyLoss(reduction='none')
-#     uncertainty_loss_per_pixel_list = []
-#     for softmax in softmax_list:
-#         log_softmax = np.log(softmax + 0.00000001)
-#         uncertainty_loss_per_pixel = loss(array_to_formatted_tensor(log_softmax),
-#                                           array_to_formatted_tensor(softmax_mean))
-#         uncertainty_loss_per_pixel_list.append(uncertainty_loss_per_pixel)
-#     uncertainty = torch.cat(uncertainty_loss_per_pixel_list).mean(dim=0)
-#     return uncertainty
-
 def softmax_list_and_mean_to_uncertainties(softmax_list, softmax_mean):
     softmax_mean_tensor = array_to_formatted_tensor(softmax_mean)
 
     ce_loss = torch.nn.CrossEntropyLoss(reduction='none')
     kl_div_loss = torch.nn.KLDivLoss(reduction='none')
 
-    # if plot:
-        # fig, ax = plt.subplots(1, 5, figsize=(25, 5))
     uncertainty_loss_per_pixel_ce_list = []
     uncertainty_loss_per_pixel_kl_list = []
 
     for i, softmax in enumerate(softmax_list):
-        # if plot:
-            # ax[i].imshow(softmax.argmax(axis=-1)-output_minus_1, **label_plot_args)
         log_softmax = np.log(softmax + 1e-8)
         log_softmax_tensor = array_to_formatted_tensor(log_softmax)
         # CE
@@ -196,9 +169,6 @@ def softmax_list_and_mean_to_uncertainties(softmax_list, softmax_mean):
         # KL / JS
         uncertainty_loss_per_pixel_kl = kl_div_loss(log_softmax_tensor, softmax_mean_tensor).mean(dim=1)
         uncertainty_loss_per_pixel_kl_list.append(uncertainty_loss_per_pixel_kl)
-    # if plot:
-        # display(fig)
-        # plt.show()
 
     uncertainty_disagreement_ce = torch.cat(uncertainty_loss_per_pixel_ce_list).mean(dim=0)
     uncertainty_disagreement_kl = torch.cat(uncertainty_loss_per_pixel_kl_list).mean(dim=0)
@@ -207,14 +177,6 @@ def softmax_list_and_mean_to_uncertainties(softmax_list, softmax_mean):
     num_classes = softmax_mean_tensor.shape[1]
     uncertainty_entropy_unnormalized = -torch.sum(softmax_mean_tensor * torch.log(softmax_mean_tensor + 1e-10), dim=1).squeeze()
     uncertainty_entropy = uncertainty_entropy_unnormalized / np.log(num_classes)
-
-    # if plot:
-        # fig, ax = plt.subplots(1, 3, figsize=(15, 5))
-        # ax[0].imshow(uncertainty_disagreement_ce, cmap='hot')
-        # ax[1].imshow(uncertainty_disagreement_kl, cmap='hot')
-        # ax[2].imshow(uncertainty_entropy, cmap='hot')
-        # # display(fig)
-        # plt.show()
 
     return uncertainty_disagreement_ce, uncertainty_disagreement_kl, uncertainty_entropy
 
@@ -374,6 +336,8 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
     # Immediately lock files
     open(wsm_path, 'w').close()
     open(wsu_ce_path, 'w').close()
+    open(wsu_kl_path, 'w').close()
+    open(wsu_entropy_path, 'w').close()
 
     print(f'[RUNNING] {image_path.stem}\n', flush=True)
 
@@ -582,18 +546,6 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
         os.remove(text_file)
         sys.exit(1)
 
-    # wsu_writer.save()  # if done save image
-    # if asap_validation(wsu_path_local):
-    #     print('\tVerification successful', flush=True)
-    #     print(f'\tCopying {wsu_path_local} to {wsu_path}', flush=True) 
-    #     shutil.copyfile(wsu_path_local, wsu_path)
-    # else:
-    #     print('\tVerification failed', flush=True)
-    #     print(f'\tRemoving initialized {wsm_path}, {wsm_path} and {text_file}', flush=True)
-    #     os.remove(wsm_path)
-    #     os.remove(wsu_path)
-    #     os.remove(text_file)
-    #     sys.exit(1)
     wsu_ce_writer.save()  # if done save image
     if asap_validation(wsu_ce_path_local):
         print('\tVerification successful', flush=True)
