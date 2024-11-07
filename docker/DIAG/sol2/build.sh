@@ -2,7 +2,6 @@
 
 VERSION="v0.04"
 
-
 NO_CACHE=""
 # Parse command line options
 while [[ "$#" -gt 0 ]]; do
