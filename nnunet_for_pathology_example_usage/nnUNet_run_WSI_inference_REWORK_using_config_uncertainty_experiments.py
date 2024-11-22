@@ -253,6 +253,11 @@ def decode_buffer_states(state_array, cpus):
         message = ''
     return state_count, message
 
+def get_closest_value(value):
+    possible_values = [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64]
+    closest = min(possible_values, key=lambda x:abs(x-value))
+    return closest
+
 def asap_validation(path):
     try:
         import multiresolutionimageinterface as mir
@@ -345,7 +350,7 @@ for idx_match, (image_path, mask_path) in enumerate(matches_to_run):
     with WholeSlideImage(image_path, backend='asap') as wsi:
         shape = wsi.shapes[wsi.get_level_from_spacing(spacing)]
         real_spacing = wsi.get_real_spacing(spacing)
-        downsampling = wsi.get_downsampling_from_spacing(spacing)
+        downsampling = get_closest_value(wsi.get_downsampling_from_spacing(spacing))
         offset = int((output_patch_size // 2) * downsampling) # this was difficult...
 
     patch_configuration = PatchConfiguration(patch_shape=(sampler_patch_size,sampler_patch_size,3),
